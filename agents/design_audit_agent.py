@@ -79,3 +79,76 @@ def run_level1_analysis(image_path: str) -> dict:
     return json.loads(raw.strip())
 
 
+LEVEL2_PROMPT = """You are a professional UI/UX design auditor performing a before/after regression analysis.
+
+You will receive two screenshots:
+- Image 1 (BEFORE): the baseline / original design
+- Image 2 (AFTER): the current / updated design
+
+Compare them carefully and identify every visual difference. For each difference provide:
+- change_type: short label for the type of change (e.g. "Color change", "Font size", "Layout shift")
+- location: where on the page
+- description: what exactly changed
+- direction: "improvement", "regression", or "neutral"
+- reasoning: why you classified it as improvement/regression/neutral
+- user_impact: how this change affects the user experience
+- severity: critical / high / medium / low / info
+- confidence_score: integer 0–100
+- accessibility_regression: true if this change reduces contrast, font size, or touch target size
+
+Return ONLY valid JSON:
+{
+  "findings": [
+    {
+      "change_type": "string",
+      "location": "string",
+      "description": "string",
+      "direction": "improvement|regression|neutral",
+      "reasoning": "string",
+      "user_impact": "string",
+      "severity": "critical|high|medium|low|info",
+      "confidence_score": 0,
+      "accessibility_regression": false
+    }
+  ],
+  "improvements_count": 0,
+  "regressions_count": 0,
+  "neutral_count": 0,
+  "overall_verdict": "improved|degraded|unchanged",
+  "summary": "One paragraph overall assessment of what changed and the net impact"
+}
+
+Rules:
+- Minimum 5 differences required
+- Only report differences you can actually see between the two images
+- Be specific about what changed"""
+
+
+def run_level2_analysis(baseline_path: str, current_path: str) -> dict:
+    baseline_data, baseline_media = encode_image(baseline_path)
+    current_data, current_media = encode_image(current_path)
+
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=4096,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Image 1 (BEFORE — baseline):"},
+                    {"type": "image", "source": {"type": "base64", "media_type": baseline_media, "data": baseline_data}},
+                    {"type": "text", "text": "Image 2 (AFTER — current):"},
+                    {"type": "image", "source": {"type": "base64", "media_type": current_media, "data": current_data}},
+                    {"type": "text", "text": LEVEL2_PROMPT},
+                ],
+            }
+        ],
+    )
+
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return json.loads(raw.strip())
+
