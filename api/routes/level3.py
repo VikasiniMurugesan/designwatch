@@ -50,9 +50,12 @@ def trigger_scan(request: ScanRequest, db: Session = Depends(get_db)):
     if not result.get("baseline_created") and result.get("regressions"):
         try:
             send_report_email(
-                subject=f"Designwatch Level 3 — {len(result['regressions'])} regression(s) detected",
-                body_html=f"<p>{summary}</p><p>See attached report for details.</p>",
-                report_path=report_path,
+                subject=f"Designwatch — {len(result['regressions'])} regression(s) detected on {request.url}",
+                summary=summary,
+                findings_json=findings_json,
+                level="level3",
+                target=request.url,
+                scan_id=scan.id,
             )
         except Exception:
             pass
