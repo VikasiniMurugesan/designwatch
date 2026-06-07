@@ -1,7 +1,9 @@
 import os
 import json
 import base64
+import shutil
 import anthropic
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
 from shared.config import ANTHROPIC_API_KEY, BASELINES_DIR, SCREENSHOTS_DIR
 
@@ -94,70 +96,73 @@ def compare_with_claude(baseline_path: str, current_path: str) -> dict:
     return json.loads(raw.strip())
 
 
+def scan_single_page(page_cfg: dict, target_url: str) -> dict:
+    page_name = page_cfg["name"]
+    page_path = page_cfg["path"]
+
+    full_url = f"{target_url.rstrip('/')}{page_path}" if not page_path.startswith("#") else f"{target_url.rstrip('/')}/{page_path}"
+    baseline_path = os.path.join(BASELINES_DIR, f"{page_name}.png")
+    current_path = os.path.join(SCREENSHOTS_DIR, f"level3_{page_name}_current.png")
+
+    capture_screenshot(full_url, page_name, SCREENSHOTS_DIR)
+    captured = os.path.join(SCREENSHOTS_DIR, f"{page_name}.png")
+    if os.path.exists(captured):
+        os.rename(captured, current_path)
+
+    if not os.path.exists(baseline_path):
+        shutil.copy(current_path, baseline_path)
+        return {"page": page_name, "status": "baseline_created", "regressions": []}
+
+    result = compare_with_claude(baseline_path, current_path)
+    regressions = result.get("regressions", [])
+    for r in regressions:
+        r["page"] = page_name
+
+    return {
+        "page": page_name,
+        "status": "compared",
+        "has_regressions": result.get("has_regressions", False),
+        "summary": result.get("summary", ""),
+        "regressions": regressions,
+    }
+
+
 def run_level3_scan(target_url: str) -> dict:
     """
-    First run: if no baseline exists, capture and store baseline. Returns baseline_created=True.
-    Subsequent runs: capture fresh screenshots, compare with baseline, return regressions.
+    Scans all pages in parallel using threads.
+    First run: captures and stores baselines.
+    Subsequent runs: compares against baselines and reports regressions.
     """
-    all_findings = []
-    pages_scanned = []
-    baseline_created = False
+    results = {}
 
-    for page_cfg in PAGES_TO_SCAN:
-        page_name = page_cfg["name"]
-        page_path = page_cfg["path"]
+    with ThreadPoolExecutor(max_workers=len(PAGES_TO_SCAN)) as executor:
+        futures = {executor.submit(scan_single_page, page_cfg, target_url): page_cfg["name"] for page_cfg in PAGES_TO_SCAN}
+        for future in as_completed(futures):
+            page_name = futures[future]
+            results[page_name] = future.result()
 
-        # Build the full URL — handle hash fragments and paths
-        if page_path.startswith("#"):
-            full_url = f"{target_url.rstrip('/')}/{page_path}"
-        else:
-            full_url = f"{target_url.rstrip('/')}{page_path}"
+    # Preserve original page order
+    ordered = [results[p["name"]] for p in PAGES_TO_SCAN]
 
-        baseline_path = os.path.join(BASELINES_DIR, f"{page_name}.png")
-        current_path = os.path.join(SCREENSHOTS_DIR, f"level3_{page_name}_current.png")
-
-        capture_screenshot(full_url, page_name, SCREENSHOTS_DIR)
-        # rename the captured file to current_path
-        captured = os.path.join(SCREENSHOTS_DIR, f"{page_name}.png")
-        if os.path.exists(captured):
-            os.rename(captured, current_path)
-
-        if not os.path.exists(baseline_path):
-            # First run — store as baseline
-            import shutil
-            shutil.copy(current_path, baseline_path)
-            baseline_created = True
-            pages_scanned.append({"page": page_name, "status": "baseline_created"})
-        else:
-            # Compare against baseline
-            result = compare_with_claude(baseline_path, current_path)
-            for r in result.get("regressions", []):
-                r["page"] = page_name
-            all_findings.extend(result.get("regressions", []))
-            pages_scanned.append({
-                "page": page_name,
-                "status": "compared",
-                "has_regressions": result.get("has_regressions", False),
-                "summary": result.get("summary", ""),
-            })
+    baseline_created = any(r["status"] == "baseline_created" for r in ordered)
 
     if baseline_created:
         return {
             "baseline_created": True,
-            "pages_scanned": pages_scanned,
+            "pages_scanned": ordered,
             "regressions": [],
             "summary": "Baseline captured for all pages. Run the scan again to detect regressions.",
         }
 
-    total_regressions = len(all_findings)
-    summary_parts = [p.get("summary", "") for p in pages_scanned if p.get("summary")]
-    overall_summary = f"Scanned {len(pages_scanned)} pages. Found {total_regressions} regression(s). " + " | ".join(summary_parts)
+    all_findings = [r for page in ordered for r in page.get("regressions", [])]
+    summary_parts = [p.get("summary", "") for p in ordered if p.get("summary")]
+    overall_summary = f"Scanned {len(ordered)} pages in parallel. Found {len(all_findings)} regression(s). " + " | ".join(summary_parts)
 
     return {
         "baseline_created": False,
-        "pages_scanned": pages_scanned,
+        "pages_scanned": ordered,
         "regressions": all_findings,
-        "total_regressions": total_regressions,
+        "total_regressions": len(all_findings),
         "summary": overall_summary,
     }
 
