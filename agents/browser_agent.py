@@ -107,7 +107,7 @@ def scan_single_page(page_cfg: dict, target_url: str) -> dict:
     capture_screenshot(full_url, page_name, SCREENSHOTS_DIR)
     captured = os.path.join(SCREENSHOTS_DIR, f"{page_name}.png")
     if os.path.exists(captured):
-        os.rename(captured, current_path)
+        os.replace(captured, current_path)
 
     if not os.path.exists(baseline_path):
         shutil.copy(current_path, baseline_path)
