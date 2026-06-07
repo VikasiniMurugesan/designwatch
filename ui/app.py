@@ -18,10 +18,10 @@ page = st.sidebar.radio("Navigate", [
 ])
 
 if page == "Level 1 — Design Audit":
-    exec(open("ui/pages/level1.py").read())
+    exec(open("ui/pages/level1.py", encoding="utf-8").read())
 elif page == "Level 2 — Before/After Regression":
-    exec(open("ui/pages/level2.py").read())
+    exec(open("ui/pages/level2.py", encoding="utf-8").read())
 elif page == "Level 3 — Autonomous Scan":
-    exec(open("ui/pages/level3.py").read())
+    exec(open("ui/pages/level3.py", encoding="utf-8").read())
 elif page == "History":
-    exec(open("ui/pages/history.py").read())
+    exec(open("ui/pages/history.py", encoding="utf-8").read())
